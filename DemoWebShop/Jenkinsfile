@@ -3,19 +3,24 @@ pipeline {
     agent any
 
     options {
-        timestamps()               // keep timestamps
-        // skipDefaultCheckout(true) // keep commented unless you add a manual checkout
+        // Keep logs readable
+        ansiColor('xterm')
+        timestamps()
+        // Use the default built-in checkout only
+        // (Remove if you decide to do a manual checkout stage)
+        // skipDefaultCheckout(true)
     }
 
     environment {
-        VENV_DIR    = 'venv'
+        VENV_DIR   = 'venv'
         TEST_REPORT = 'report.html'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/salmakhaled-1/playwright-jenkins.git', branch: 'main'
+                git tool: 'Default', url: 'https://github.com/salmakhaled-1/playwright-jenkins.git', branch: 'main'
+                
             }
         }
 
@@ -24,21 +29,26 @@ pipeline {
                 powershell '''
                     $ErrorActionPreference = "Stop"
 
+                    # Confirm Python exists
                     python --version
 
+                    # Create venv if not present
                     if (!(Test-Path ".\\\\${env:VENV_DIR}")) {
                         python -m venv "${env:VENV_DIR}"
                     }
 
+                    # Activate venv and upgrade pip
                     . ".\\\\${env:VENV_DIR}\\\\Scripts\\\\Activate.ps1"
                     python -m pip install --upgrade pip
 
+                    # Install deps
                     if (Test-Path ".\\\\requirements.txt") {
                         pip install -r requirements.txt
                     } else {
                         Write-Host "requirements.txt not found – skipping"
                     }
 
+                    # Install Playwright + browsers
                     pip install playwright
                     python -m playwright install --with-deps
                 '''
@@ -55,6 +65,7 @@ pipeline {
                         New-Item -ItemType Directory -Path ".\\\\artifacts" | Out-Null
                     }
 
+                    # Run pytest and generate a self-contained HTML report
                     pytest -q --maxfail=1 --disable-warnings --html="${env:TEST_REPORT}" --self-contained-html
                 '''
             }
@@ -64,10 +75,19 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: 'report.html, artifacts/**', fingerprint: true, allowEmptyArchive: true
+
+            // Optional: HTML Publisher plugin (uncomment if installed)
+            // publishHTML(target: [
+            //   allowMissing: true,
+            //   alwaysLinkToLastBuild: true,
+            //   keepAll: true,
+            //   reportDir: '.',
+            //   reportFiles: "${env.TEST_REPORT}",
+            //   reportName: 'Playwright Test Report'
+            // ])
         }
         failure {
             echo 'Build failed. Check console log & archived artifacts for details.'
         }
     }
 }
-
