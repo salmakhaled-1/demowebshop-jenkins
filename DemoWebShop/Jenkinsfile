@@ -19,8 +19,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                   url: 'https://github.com/salmakhaled-1/playwright-jenkins.git'
-                checkout scm
+                   git tool: 'Default', url: 'https://github.com/salmakhaled-1/playwright-jenkins.git', branch: 'main'
             }
         }
 
