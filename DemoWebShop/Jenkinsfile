@@ -1,0 +1,33 @@
+pipeline {
+    agent any
+
+    stages {
+
+        stage('Get Code') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/salmakhaled-1/playwright-jenkins/new/main/DemoWebShop'
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+                python -m venv venv
+                . venv/bin/activate
+                pip install -r requirements.txt
+                playwright install
+                '''
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                sh '''
+                . venv/bin/activate
+                pytest
+                '''
+            }
+        }
+    }
+}
