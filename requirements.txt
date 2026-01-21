@@ -2,6 +2,10 @@
 # --- Core Testing Framework ---
 pytest==9.0.2
 
+pytest-xdist==3.6.1
+``
+
+
 # --- HTML Report Support (pytest --html)
 pytest-html==4.2.0
 pytest-metadata==3.1.1
