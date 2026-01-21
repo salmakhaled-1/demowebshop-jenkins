@@ -51,7 +51,7 @@ pipeline {
                         if (!(Test-Path ".\\artifacts")) { New-Item -ItemType Directory -Path ".\\artifacts" | Out-Null }
                         if (!(Test-Path ".\\${env:ALLURE_DIR}")) { New-Item -ItemType Directory -Path ".\\${env:ALLURE_DIR}" | Out-Null }
 
-                        pytest -q --maxfail=1 --disable-warnings `
+                        pytest DemoWebShop/tests -q --disable-warnings `
                           --html="${env:TEST_REPORT}" --self-contained-html `
                           --alluredir="${env:ALLURE_DIR}" `
                           --tracing=retain-on-failure `
