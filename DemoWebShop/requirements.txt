@@ -1,5 +1,17 @@
+
+# --- Core Testing Framework ---
 pytest==9.0.2
+
+# --- HTML Report Support ---
 pytest-html==4.2.0
+pytest-metadata==3.1.1
+
+# --- Playwright Core ---
 playwright==1.57.0
 pytest-playwright==0.5.1
+
+# --- Allure Reporting ---
 allure-pytest==2.13.5
+
+# --- Optional but helpful for logs & output ---
+colorama==0.4.6
