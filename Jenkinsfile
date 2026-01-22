@@ -52,7 +52,6 @@ pipeline {
                         if (!(Test-Path ".\\${env:ALLURE_DIR}")) { New-Item -ItemType Directory -Path ".\\${env:ALLURE_DIR}" | Out-Null }
 
                         pytest DemoWebShop/tests -q --disable-warnings `
-                          --headed `
                           --html="${env:TEST_REPORT}" --self-contained-html `
                           --alluredir="${env:ALLURE_DIR}" `
                           --tracing=retain-on-failure `
