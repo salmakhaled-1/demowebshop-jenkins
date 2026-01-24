@@ -5,16 +5,22 @@ pipeline {
     options { timestamps() }
 
     environment {
-        // Python
+        // --- CONFIGURE THIS ONE THING ---
+        // If JS project is at repo root -> leave as empty string ''
+        // If in a folder, put the exact folder name (quotes kept), e.g.:
+        // JS_DIR = 'playwright-js \\ automation playwright task'
+        JS_DIR = ''
+
+        // Python locations
         VENV_DIR      = 'venv'
         PY_TEST_PATH  = 'playwright-python/DemoWebShop/tests'
         PY_ALLURE_DIR = 'allure-results'
         TEST_REPORT   = 'report.html'
 
-        // JavaScript (kept at repo root)
+        // JS Allure results (directory will be created in the JS working dir)
         JS_ALLURE_DIR = 'allure-results-js'
 
-        // Cache Playwright browsers to avoid re-downloading every time
+        // Browser cache (skip re-downloads)
         PLAYWRIGHT_BROWSERS_PATH            = 'C:\\ms-playwright'
         PLAYWRIGHT_BROWSER_DOWNLOAD_TIMEOUT = '600000'  // 10 minutes
     }
@@ -24,7 +30,23 @@ pipeline {
             steps { checkout scm }
         }
 
-        /* ====================== JavaScript Playwright (ROOT) ====================== */
+        stage('Diag: locate JS project (one-time)') {
+            steps {
+                powershell '''
+                    $ErrorActionPreference = "Stop"
+                    Write-Host "Repo root contents:"
+                    Get-ChildItem -Force | Select-Object Name,Mode,Length
+
+                    Write-Host "`nSearch for package.json:"
+                    Get-ChildItem -Recurse -Filter package.json | Select-Object -Expand FullName
+
+                    Write-Host "`nSearch for playwright.config.js:"
+                    Get-ChildItem -Recurse -Filter playwright.config.js | Select-Object -Expand FullName
+                '''
+            }
+        }
+
+        /* ====================== JavaScript Playwright ====================== */
         stage('Check Node & npm') {
             steps {
                 powershell '''
@@ -35,29 +57,54 @@ pipeline {
             }
         }
 
-        stage('Install Node deps (JS @ ROOT)') {
+        stage('Install Node deps (JS)') {
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
-                    # We are at repo root where package.json exists
-                    if (Test-Path package-lock.json) { npm ci } else { npm install }
 
-                    # Install browsers (reuses the cached path set in env)
-                    npx playwright install chromium
+                    # Resolve JS working directory
+                    $jsDir = $env:JS_DIR
+                    if ([string]::IsNullOrWhiteSpace($jsDir)) { $jsDir = '.' }
+
+                    # Preflight checks
+                    $pkg = Join-Path $jsDir 'package.json'
+                    $cfg = Join-Path $jsDir 'playwright.config.js'
+                    if (!(Test-Path $pkg)) { Write-Error "package.json not found at: $pkg. Set JS_DIR correctly ('' for root or exact folder name)."; exit 1 }
+                    if (!(Test-Path $cfg)) { Write-Error "playwright.config.js not found at: $cfg. Set JS_DIR correctly."; exit 1 }
+
+                    Push-Location $jsDir
+                    try {
+                        if (Test-Path 'package-lock.json') { npm ci } else { npm install }
+                        npx playwright install chromium
+                    } finally {
+                        Pop-Location
+                    }
                 '''
             }
         }
 
-        stage('Run JS Playwright (Allure @ ROOT)') {
+        stage('Run JS Playwright (Allure)') {
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
 
-                    # Clean previous JS Allure results at root
-                    if (Test-Path ".\\${env:JS_ALLURE_DIR}") { Remove-Item -Recurse -Force ".\\${env:JS_ALLURE_DIR}" }
+                    # Resolve JS working directory
+                    $jsDir = $env:JS_DIR
+                    if ([string]::IsNullOrWhiteSpace($jsDir)) { $jsDir = '.' }
 
-                    # Reporter is configured in root playwright.config.js → writes to allure-results-js
-                    npx playwright test --config=playwright.config.js
+                    $cfg = Join-Path $jsDir 'playwright.config.js'
+                    if (!(Test-Path $cfg)) { Write-Error "playwright.config.js not found at: $cfg. Cannot run JS tests."; exit 1 }
+
+                    Push-Location $jsDir
+                    try {
+                        # Clean previous JS Allure results in JS dir
+                        if (Test-Path ".\\$($env:JS_ALLURE_DIR)") { Remove-Item -Recurse -Force ".\\$($env:JS_ALLURE_DIR)" }
+
+                        # Run JS tests using the config in JS dir
+                        npx playwright test --config=playwright.config.js
+                    } finally {
+                        Pop-Location
+                    }
                 '''
             }
         }
@@ -91,7 +138,6 @@ pipeline {
 
         stage('Install Playwright browser(s) for Python') {
             steps {
-                // Retry to tolerate flaky network
                 retry(2) {
                     powershell '''
                         $ErrorActionPreference = "Stop"
@@ -102,7 +148,7 @@ pipeline {
                             New-Item -ItemType Directory -Path "${env:PLAYWRIGHT_BROWSERS_PATH}" | Out-Null
                         }
 
-                        # Windows: do NOT use --with-deps (Linux-only)
+                        # Windows: no --with-deps
                         python -m playwright install chromium
                     '''
                 }
@@ -111,7 +157,6 @@ pipeline {
 
         stage('Run Python Tests (Allure + HTML)') {
             steps {
-                // Keep build UNSTABLE on test failures so reports still publish
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     powershell '''
                         $ErrorActionPreference = "Stop"
@@ -136,22 +181,33 @@ pipeline {
 
     post {
         always {
-            // Publish ONE Allure report that merges BOTH result folders (root)
+            // Resolve JS results path relative to workspace
+            script {
+                // Groovy side build of JS allure path for the publisher
+                def jsDir = env.JS_DIR?.trim()
+                if (!jsDir) {
+                    env.JS_ALLURE_PUBLISH = "${env.JS_ALLURE_DIR}"
+                } else {
+                    env.JS_ALLURE_PUBLISH = "${jsDir}/${env.JS_ALLURE_DIR}"
+                }
+            }
+
+            // Publish combined Allure report (Python + JS)
             allure includeProperties: false, jdk: '',
                    results: [
-                       [path: 'allure-results'],     // Python
-                       [path: 'allure-results-js']   // JavaScript
+                       [path: 'allure-results'],                // Python
+                       [path: "${env.JS_ALLURE_PUBLISH}"]       // JavaScript (root or subfolder)
                    ]
 
-            // Keep raw artifacts
-            archiveArtifacts artifacts: 'report.html, artifacts/**, allure-results/**, allure-results-js/**',
+            // Archive raw artifacts
+            archiveArtifacts artifacts: "report.html, artifacts/**, allure-results/**, ${env.JS_ALLURE_PUBLISH}/**",
                              fingerprint: true,
                              allowEmptyArchive: true
 
-            echo 'Reports published (JS + Python) in one Allure report.'
+            echo "Reports published (JS + Python). JS results dir: ${env.JS_ALLURE_PUBLISH}"
         }
         unstable {
-            echo 'Build UNSTABLE due to test failures. Reports published.'
+            echo 'Build UNSTABLE due to test failures.'
         }
         failure {
             echo 'Build FAILED at pipeline level.'
