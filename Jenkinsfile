@@ -5,9 +5,18 @@ pipeline {
     options { timestamps() }
 
     environment {
-        VENV_DIR    = 'venv'
-        TEST_REPORT = 'report.html'
-        ALLURE_DIR  = 'allure-results'
+        // Python
+        VENV_DIR      = 'venv'
+        PY_TEST_PATH  = 'playwright-python/DemoWebShop/tests'
+        PY_ALLURE_DIR = 'allure-results'
+        TEST_REPORT   = 'report.html'
+
+        // JavaScript (JS results will be at repo root)
+        JS_ALLURE_DIR = 'allure-results-js'
+
+        // Shared Playwright browser cache (skip re-downloading every build)
+        PLAYWRIGHT_BROWSERS_PATH            = 'C:\\ms-playwright'
+        PLAYWRIGHT_BROWSER_DOWNLOAD_TIMEOUT = '600000'  // 10 minutes for slow links
     }
 
     stages {
@@ -15,10 +24,51 @@ pipeline {
             steps { checkout scm }
         }
 
-        stage('Set up Python venv') {
+        /* ========================= JavaScript Playwright ========================= */
+        stage('Check Node & npm') {
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
+                    node -v
+                    npm -v
+                '''
+            }
+        }
+
+        stage('Install Node deps (JS)') {
+            steps {
+                powershell '''
+                    $ErrorActionPreference = "Stop"
+                    # We are at repo root where package.json exists
+                    if (Test-Path package-lock.json) { npm ci } else { npm install }
+
+                    # Install browsers (reuses the cached path set in env)
+                    npx playwright install chromium
+                '''
+            }
+        }
+
+        stage('Run JS Playwright (Allure)') {
+            steps {
+                powershell '''
+                    $ErrorActionPreference = "Stop"
+
+                    # Clean previous JS Allure results at root
+                    if (Test-Path ".\\${env:JS_ALLURE_DIR}") { Remove-Item -Recurse -Force ".\\${env:JS_ALLURE_DIR}" }
+
+                    # Reporter is configured in playwright.config.js (root) → writes to allure-results-js
+                    npx playwright test --config=playwright.config.js
+                '''
+            }
+        }
+
+        /* ========================= Python Playwright ========================= */
+        stage('Set up Python venv & deps') {
+            steps {
+                powershell '''
+                    $ErrorActionPreference = "Stop"
+                    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+
                     python --version
 
                     if (!(Test-Path ".\\${env:VENV_DIR}")) {
@@ -26,34 +76,54 @@ pipeline {
                     }
 
                     . ".\\${env:VENV_DIR}\\Scripts\\Activate.ps1"
-                    python -m pip install --upgrade pip
+                    python -m pip install --upgrade pip wheel setuptools
 
                     if (Test-Path ".\\requirements.txt") {
+                        Write-Host "requirements.txt found. Installing..."
                         pip install -r requirements.txt
                     } else {
-                        Write-Warning "requirements.txt not found at repo root"
+                        Write-Warning "requirements.txt not found. Installing minimal deps."
                         pip install pytest pytest-html playwright pytest-playwright allure-pytest
                     }
-
-                    python -m playwright install --with-deps
                 '''
             }
         }
 
-        stage('Run Tests (with Allure)') {
+        stage('Install Playwright browser(s) for Python') {
             steps {
-                // Mark the stage FAILURE but keep the build UNSTABLE so Allure can publish
+                // Retry to tolerate flaky network
+                retry(2) {
+                    powershell '''
+                        $ErrorActionPreference = "Stop"
+                        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+                        . ".\\${env:VENV_DIR}\\Scripts\\Activate.ps1"
+
+                        if (!(Test-Path "${env:PLAYWRIGHT_BROWSERS_PATH}")) {
+                            New-Item -ItemType Directory -Path "${env:PLAYWRIGHT_BROWSERS_PATH}" | Out-Null
+                        }
+
+                        # Windows: do NOT use --with-deps (Linux-only)
+                        python -m playwright install chromium
+                    '''
+                }
+            }
+        }
+
+        stage('Run Python Tests (Allure + HTML)') {
+            steps {
+                // Keep build UNSTABLE on test failures so reports still publish
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     powershell '''
                         $ErrorActionPreference = "Stop"
+                        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
                         . ".\\${env:VENV_DIR}\\Scripts\\Activate.ps1"
 
-                        if (!(Test-Path ".\\artifacts")) { New-Item -ItemType Directory -Path ".\\artifacts" | Out-Null }
-                        if (!(Test-Path ".\\${env:ALLURE_DIR}")) { New-Item -ItemType Directory -Path ".\\${env:ALLURE_DIR}" | Out-Null }
+                        if (!(Test-Path ".\\artifacts"))            { New-Item -ItemType Directory -Path ".\\artifacts" | Out-Null }
+                        if (!(Test-Path ".\\${env:PY_ALLURE_DIR}")) { New-Item -ItemType Directory -Path ".\\${env:PY_ALLURE_DIR}" | Out-Null }
 
-                        pytest DemoWebShop/tests -q --disable-warnings `
+                        pytest "${env:PY_TEST_PATH}" -q --disable-warnings `
                           --html="${env:TEST_REPORT}" --self-contained-html `
-                          --alluredir="${env:ALLURE_DIR}" `
+                          --alluredir="${env:PY_ALLURE_DIR}" `
                           --tracing=retain-on-failure `
                           --screenshot=only-on-failure `
                           --video=retain-on-failure `
@@ -66,14 +136,22 @@ pipeline {
 
     post {
         always {
-            // Publish Allure report (requires Allure Jenkins Plugin + configured Allure commandline)
-            allure includeProperties: false, jdk: '', results: [[path: 'allure-results']]
+            // Publish ONE Allure report that merges BOTH result folders
+            allure includeProperties: false, jdk: '',
+                   results: [
+                       [path: 'allure-results'],     // Python
+                       [path: 'allure-results-js']   // JavaScript
+                   ]
 
-            // Keep raw artifacts (HTML report + Playwright outputs)
-            archiveArtifacts artifacts: 'report.html, artifacts/**, allure-results/**', fingerprint: true, allowEmptyArchive: true
+            // Keep raw artifacts (HTML report + Playwright outputs + both allure result folders)
+            archiveArtifacts artifacts: 'report.html, artifacts/**, allure-results/**, allure-results-js/**',
+                             fingerprint: true,
+                             allowEmptyArchive: true
+
+            echo 'Reports published (JS + Python) in one Allure report.'
         }
         unstable {
-            echo 'Build marked UNSTABLE due to test failures. Allure report published.'
+            echo 'Build UNSTABLE due to test failures. Reports published.'
         }
         failure {
             echo 'Build FAILED at pipeline level.'
