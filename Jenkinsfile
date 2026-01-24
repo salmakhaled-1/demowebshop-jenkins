@@ -11,12 +11,12 @@ pipeline {
         PY_ALLURE_DIR = 'allure-results'
         TEST_REPORT   = 'report.html'
 
-        // JavaScript (JS results will be at repo root)
+        // JavaScript (kept at repo root)
         JS_ALLURE_DIR = 'allure-results-js'
 
-        // Shared Playwright browser cache (skip re-downloading every build)
+        // Cache Playwright browsers to avoid re-downloading every time
         PLAYWRIGHT_BROWSERS_PATH            = 'C:\\ms-playwright'
-        PLAYWRIGHT_BROWSER_DOWNLOAD_TIMEOUT = '600000'  // 10 minutes for slow links
+        PLAYWRIGHT_BROWSER_DOWNLOAD_TIMEOUT = '600000'  // 10 minutes
     }
 
     stages {
@@ -24,7 +24,7 @@ pipeline {
             steps { checkout scm }
         }
 
-        /* ========================= JavaScript Playwright ========================= */
+        /* ====================== JavaScript Playwright (ROOT) ====================== */
         stage('Check Node & npm') {
             steps {
                 powershell '''
@@ -35,7 +35,7 @@ pipeline {
             }
         }
 
-        stage('Install Node deps (JS)') {
+        stage('Install Node deps (JS @ ROOT)') {
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
@@ -48,7 +48,7 @@ pipeline {
             }
         }
 
-        stage('Run JS Playwright (Allure)') {
+        stage('Run JS Playwright (Allure @ ROOT)') {
             steps {
                 powershell '''
                     $ErrorActionPreference = "Stop"
@@ -56,13 +56,13 @@ pipeline {
                     # Clean previous JS Allure results at root
                     if (Test-Path ".\\${env:JS_ALLURE_DIR}") { Remove-Item -Recurse -Force ".\\${env:JS_ALLURE_DIR}" }
 
-                    # Reporter is configured in playwright.config.js (root) → writes to allure-results-js
+                    # Reporter is configured in root playwright.config.js → writes to allure-results-js
                     npx playwright test --config=playwright.config.js
                 '''
             }
         }
 
-        /* ========================= Python Playwright ========================= */
+        /* ====================== Python Playwright ====================== */
         stage('Set up Python venv & deps') {
             steps {
                 powershell '''
@@ -136,14 +136,14 @@ pipeline {
 
     post {
         always {
-            // Publish ONE Allure report that merges BOTH result folders
+            // Publish ONE Allure report that merges BOTH result folders (root)
             allure includeProperties: false, jdk: '',
                    results: [
                        [path: 'allure-results'],     // Python
                        [path: 'allure-results-js']   // JavaScript
                    ]
 
-            // Keep raw artifacts (HTML report + Playwright outputs + both allure result folders)
+            // Keep raw artifacts
             archiveArtifacts artifacts: 'report.html, artifacts/**, allure-results/**, allure-results-js/**',
                              fingerprint: true,
                              allowEmptyArchive: true
