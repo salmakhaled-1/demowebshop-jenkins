@@ -26,16 +26,6 @@ def page(context):
     page.close()
 
 
-@pytest.fixture(scope="session", autouse=True)
-def allure_env():
-    os.makedirs("allure-results", exist_ok=True)
-    with open("allure-results/environment.properties", "w", encoding="utf-8") as f:
-        f.write(f"Headless={HEADLESS}\n")
-        f.write(f"RecordVideo={RECORD_VIDEO}\n")
-        f.write(f"Trace={TRACE}\n")
-        f.write("Browser=Chromium\n")
-
-
 
 @pytest.fixture
 def logged_in_page(page):
