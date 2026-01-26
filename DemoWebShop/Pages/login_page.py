@@ -1,5 +1,6 @@
 from playwright.sync_api import Page, expect
 
+
 class LoginPage:
     def __init__(self, page: Page):
         self.page = page
@@ -23,3 +24,9 @@ class LoginPage:
         error = self.page.locator(".validation-summary-errors span")
         expect(error).to_be_visible()
         expect(error).to_have_text(error_message)
+
+    # ✅ MUST be inside the class
+    def login_successful(self, email: str, password: str):
+        self.open_login()
+        self.login(email, password)
+        self.assert_login_success()
