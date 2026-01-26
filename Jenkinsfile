@@ -10,6 +10,13 @@ pipeline {
     }
 
     stages {
+        stage('Pre-clean workspace') {
+            steps {
+                // Ensures no stale files (including old allure-results) remain
+                deleteDir()
+            }
+        }
+
         stage('Checkout') {
             steps { checkout scm }
         }
@@ -47,12 +54,17 @@ pipeline {
                         $ErrorActionPreference = "Stop"
                         . ".\\${env:VENV_DIR}\\Scripts\\Activate.ps1"
 
+                        # Clean previous outputs to avoid mixing old/new
+                        if (Test-Path ".\\${env:ALLURE_DIR}") { Remove-Item ".\\${env:ALLURE_DIR}" -Recurse -Force }
+                        if (Test-Path ".\\artifacts\\playwright") { Remove-Item ".\\artifacts\\playwright" -Recurse -Force }
+
                         if (!(Test-Path ".\\artifacts")) { New-Item -ItemType Directory -Path ".\\artifacts" | Out-Null }
                         if (!(Test-Path ".\\${env:ALLURE_DIR}")) { New-Item -ItemType Directory -Path ".\\${env:ALLURE_DIR}" | Out-Null }
 
                         pytest DemoWebShop/tests -q --disable-warnings `
                           --html="${env:TEST_REPORT}" --self-contained-html `
                           --alluredir="${env:ALLURE_DIR}" `
+                          --clean-alluredir `
                           --tracing=retain-on-failure `
                           --screenshot=only-on-failure `
                           --video=retain-on-failure `
